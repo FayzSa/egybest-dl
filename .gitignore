@@ -1,0 +1,5 @@
+.vscode/
+build/
+dist/
+egybest_dl.*/
+venv/
