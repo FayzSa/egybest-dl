@@ -180,7 +180,8 @@ def main(search, quality, seasons, output_file, dest, executable_path, quiet):
     page_links = list(set(page_links))
     if old_len != len(page_links):
         if not quiet: click.echo('removed duplicate links')
-    page_links.sort()
+    # sort episodes
+    page_links.sort(key=lambda v: int(''.join([c for c in v if c.isdigit()])))
     if not quiet: click.echo('Gathering download links...')
     cur = 0
     while cur<len(page_links):
