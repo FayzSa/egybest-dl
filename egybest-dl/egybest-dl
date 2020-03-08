@@ -5,6 +5,7 @@ import sys
 import time
 import click
 import tempfile
+import operator
 import requests
 import webbrowser
 from os.path import expanduser
@@ -19,7 +20,7 @@ from selenium.webdriver.common.by import By
 __author__ = 'Yassine Addi'
 __copyright__ = 'Copyright (C) 2020 Yassine Addi'
 __license__ = 'MIT'
-__version__ = '2020.3.2.2'
+__version__ = '2020.3.8'
 
 AVAILABLE_QUALITIES = ['1080', '720', '480', '360', '240']
 URL = 'https://nova.egybest.site'
@@ -31,14 +32,28 @@ def validate_seasons(ctx, param, value):
     try:
         x = tuple()
         for v in value:
-            if ':' in v: s, ep_list = v.split(':')
-            else: s, ep_list = v, str()
-            if ',' in ep_list or ep_list.isdigit():
+            if ':' in v:
+                s, ep_list = v.split(':')
+                if not ep_list:
+                    ep_list = tuple()
+            else:
+                s, ep_list = v, tuple()
+            
+            if isinstance(ep_list, str) and (',' in ep_list or ep_list.isdigit()):
                 ep_list = tuple([int(ep) for ep in ep_list.split(',')])
+            elif not ep_list:
+                pass
+            elif ep_list[0] in ['>', '<']:
+                if '>' == ep_list[0]:
+                    ep_list = (operator.gt, int(ep_list[1:]))
+                elif '<' == ep_list[0]:
+                    ep_list = (operator.lt, int(ep_list[1:]))
+            else:
+                raise click.BadArgumentUsage('bad argument.')
             x += ((int(s), ep_list),)
         return x
     except Exception as e:
-        raise click.BadArgumentUsage('Bad argument usage for SEASONS, please see the examples.')
+        raise click.BadArgumentUsage('bad argument.')
     return value
 
 def make_safe_filename(unsafe_filename):
@@ -49,7 +64,7 @@ def make_safe_filename(unsafe_filename):
 @click.option('--quality', '-Q', default='720', show_default=True, type=click.Choice(AVAILABLE_QUALITIES), help='Quality of output video.')
 @click.option('--output-file', '-o', type=click.File(mode='w'), help='Save download URIs to FILENAME.')
 @click.option('--dest', '-d', default=expanduser("~")+os.sep, help='Destination path.')
-@click.option('--executable-path', type=click.Path(exists=True, file_okay=True, dir_okay=False), help='Path to chromedriver executable.')
+@click.option('--executable-path', '-x', type=click.Path(exists=True, file_okay=True, dir_okay=False), help='Path to chromedriver executable.')
 @click.option('--quiet', default=False, is_flag=True, help='Activate quiet mode.')
 @click.argument('search', required=False, nargs=1)
 @click.argument('seasons', nargs=-1, callback=validate_seasons)
@@ -81,6 +96,9 @@ def main(search, quality, seasons, output_file, dest, executable_path, quiet):
     chrome_options.add_experimental_option("prefs", chrome_prefs)
     chrome_options.add_argument('--incognito')
     chrome_options.add_argument('--headless')
+    # run chromedriver in silent mode
+    chrome_options.add_argument('--log-level=OFF')
+    chrome_options.add_experimental_option('excludeSwitches', ['enable-logging'])
     try:
         browser = webdriver.Chrome(executable_path=executable_path, options=chrome_options)
     except Exception as e:
@@ -162,7 +180,22 @@ def main(search, quality, seasons, output_file, dest, executable_path, quiet):
             ep_list = seasons[x][1]
             nb = len(soup.select('a[href*="-season-{}-ep-"]'.format(s)))
             if not quiet: click.echo('There are {} episodes in season {}'.format(nb, s))
-            if isinstance(ep_list, str):
+
+            # is it a filtered search?
+            if len(ep_list) > 0 and callable(ep_list[0]):
+                # build a new list...
+                new_ep_list = tuple()
+                for ep in range(1,nb+1):
+                    # if the episode matches the condition
+                    if ep_list[0](ep, ep_list[1]):
+                        #add it to the new list
+                        new_ep_list += (ep,)
+                # 'None' to distinguish it from downloading all episodes.
+                ep_list = new_ep_list if len(new_ep_list) > 0 else None
+
+            if ep_list is None:
+                pass
+            elif not ep_list:
                 elems = soup.select('a[href*="-season-{}-ep-"]'.format(s))
                 page_links += [elem.attrs['href'] for elem in elems]
                 if not quiet: click.echo('all {} episodes added'.format(nb))
@@ -197,19 +230,19 @@ def main(search, quality, seasons, output_file, dest, executable_path, quiet):
             continue
         except NoSuchElementException:
             click.echo('link for {} don\'t exist'.format(quality))
-            quality = click.prompt('Choose', type=click.Choice(AVAILABLE_QUALITIES))
+            qualities_list = []
+            for x in AVAILABLE_QUALITIES:
+                if browser.find_elements_by_xpath('//table[contains(@class, "dls_table")]//tr[td//text()[contains(., "{}p")]]//a[1]'.format(x)):
+                    qualities_list.append(x)
+            quality = click.prompt('Choose', type=click.Choice(qualities_list))
             continue
 
-        # assert len(browser.window_handles)>1
         try:
             WebDriverWait(browser, 30).until(lambda x: 'VidStream' in browser.title)
         except:
             if not quiet: click.echo('failed to access download page, retrying...')
             time.sleep(2)
             continue
-        # browser.switch_to.window(browser.window_handles[0])
-        # browser.close()
-        # browser.switch_to.window(browser.window_handles[0])
         
         try:
             browser.find_element_by_xpath('//*[contains(text(), "Download")]').click()

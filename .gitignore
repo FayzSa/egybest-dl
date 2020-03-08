@@ -3,3 +3,4 @@ build/
 dist/
 egybest_dl.*/
 venv/
+__pycache__
